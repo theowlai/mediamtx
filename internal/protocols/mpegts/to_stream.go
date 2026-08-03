@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 
 	"github.com/bluenviron/gortsplib/v5/pkg/description"
 	"github.com/bluenviron/gortsplib/v5/pkg/format"
@@ -16,6 +17,14 @@ import (
 	"github.com/bluenviron/mediamtx/internal/stream"
 	"github.com/bluenviron/mediamtx/internal/unit"
 )
+
+// isMalformedH265NALU reports whether a NAL unit violates H.265 Section 7.4.2.2,
+// which requires nuh_temporal_id_plus1 != 0. Some encoders emit H.264-style
+// access unit delimiters (bytes 09 F0) into HEVC streams, producing 2-byte
+// NAL units that set this field to 0 and corrupt downstream RTP aggregation.
+func isMalformedH265NALU(nalu []byte) bool {
+	return len(nalu) < 2 || (nalu[1]&0x07) == 0
+}
 
 var errNoSupportedCodecs = errors.New(
 	"the stream doesn't contain any supported codec, which are currently " +
@@ -47,6 +56,11 @@ func ToStream(
 
 			r.OnDataH265(track, func(pts int64, _ int64, au [][]byte) error {
 				pts = td.Decode(pts)
+
+				au = slices.DeleteFunc(au, isMalformedH265NALU)
+				if len(au) == 0 {
+					return nil
+				}
 
 				(*subStream).WriteUnit(medi, medi.Formats[0], &unit.Unit{
 					PTS:     pts, // no conversion is needed since clock rate is 90khz in both MPEG-TS and RTSP
