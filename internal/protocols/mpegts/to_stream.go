@@ -54,6 +54,28 @@ func ToStream(
 				}},
 			}
 
+			// Some encoders split a single multi-slice picture across multiple
+			// PES packets that share the same PTS. Hold one access unit and
+			// merge any subsequent AUs with matching PTS into it before
+			// emitting. ffmpeg tolerates this layout; downstream consumers
+			// (RTP packetizer, fMP4 muxer, RTSP receivers) require one AU
+			// per picture. The held AU is emitted when a new PTS arrives.
+			var pendingAU [][]byte
+			var pendingPTS int64
+			var pendingValid bool
+
+			flushPending := func() {
+				if !pendingValid || len(pendingAU) == 0 {
+					return
+				}
+				(*subStream).WriteUnit(medi, medi.Formats[0], &unit.Unit{
+					PTS:     pendingPTS, // no conversion is needed since clock rate is 90khz in both MPEG-TS and RTSP
+					Payload: unit.PayloadH265(pendingAU),
+				})
+				pendingAU = nil
+				pendingValid = false
+			}
+
 			r.OnDataH265(track, func(pts int64, _ int64, au [][]byte) error {
 				pts = td.Decode(pts)
 
@@ -62,10 +84,15 @@ func ToStream(
 					return nil
 				}
 
-				(*subStream).WriteUnit(medi, medi.Formats[0], &unit.Unit{
-					PTS:     pts, // no conversion is needed since clock rate is 90khz in both MPEG-TS and RTSP
-					Payload: unit.PayloadH265(au),
-				})
+				if pendingValid && pts == pendingPTS {
+					pendingAU = append(pendingAU, au...)
+					return nil
+				}
+
+				flushPending()
+				pendingAU = au
+				pendingPTS = pts
+				pendingValid = true
 				return nil
 			})
 
