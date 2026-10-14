@@ -121,6 +121,20 @@ authHTTPExclude:
   - action: pprof
 ```
 
+Unlike excluded actions, which are accepted from anyone, requests can be checked against `authInternalUsers` first, and sent to the authentication server only when no internal user allows them:
+
+```yml
+authMethod: http
+authHTTPAddress: http://myauthserver/auth
+authHTTPExclude: []
+authHTTPTryInternalUsers: true
+authInternalUsers:
+  - user: any
+    ips: ["127.0.0.1", "::1"]
+    permissions:
+      - action: api
+```
+
 If the authentication server uses HTTPS and has a self-signed or invalid TLS certificate, you can provide the fingerprint of the certificate to validate it anyway:
 
 ```yml

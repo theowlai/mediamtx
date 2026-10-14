@@ -90,19 +90,22 @@ func getToken(tokenInHTTPQuery bool, req *Request) string {
 
 // Manager is the authentication manager.
 type Manager struct {
-	Method             conf.AuthMethod
-	InternalUsers      []conf.AuthInternalUser
-	HTTPAddress        string
-	HTTPFingerprint    string
-	HTTPExclude        []conf.AuthInternalUserPermission
-	JWTJWKS            string
-	JWTJWKSFingerprint string
-	JWTClaimKey        string
-	JWTExclude         []conf.AuthInternalUserPermission
-	JWTInHTTPQuery     *bool
-	JWTIssuer          string
-	JWTAudience        string
-	ReadTimeout        time.Duration
+	Method          conf.AuthMethod
+	InternalUsers   []conf.AuthInternalUser
+	HTTPAddress     string
+	HTTPFingerprint string
+	HTTPExclude     []conf.AuthInternalUserPermission
+	// HTTPTryInternalUsers accepts a request that InternalUsers allows without
+	// contacting HTTPAddress.
+	HTTPTryInternalUsers bool
+	JWTJWKS              string
+	JWTJWKSFingerprint   string
+	JWTClaimKey          string
+	JWTExclude           []conf.AuthInternalUserPermission
+	JWTInHTTPQuery       *bool
+	JWTIssuer            string
+	JWTAudience          string
+	ReadTimeout          time.Duration
 
 	mutex           sync.RWMutex
 	jwksLastRefresh time.Time
@@ -191,6 +194,12 @@ func (m *Manager) authenticateWithUser(
 func (m *Manager) authenticateHTTP(req *Request, token string) (string, error) {
 	if matchesPermission(m.HTTPExclude, req) {
 		return "", nil
+	}
+
+	if m.HTTPTryInternalUsers {
+		if user, err := m.authenticateInternal(req); err == nil {
+			return user, nil
+		}
 	}
 
 	enc, _ := json.Marshal(struct {

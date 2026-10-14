@@ -110,6 +110,9 @@ authHTTPExclude:
   - action: api
   - action: metrics
   - action: pprof
+# Check authInternalUsers first, and contact the HTTP URL only when no internal
+# user allows the request.
+authHTTPTryInternalUsers: false
 
 # JWT-based authentication.
 # Users have to log in through an external identity server and obtain a JWT.

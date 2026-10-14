@@ -455,6 +455,67 @@ func TestAuthHTTPExclude(t *testing.T) {
 	require.Equal(t, "", user)
 }
 
+func TestAuthHTTPTryInternalUsers(t *testing.T) {
+	httpCalls := 0
+
+	httpServ := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			httpCalls++
+
+			var in struct {
+				Password string `json:"password"`
+			}
+			err := json.NewDecoder(r.Body).Decode(&in)
+			require.NoError(t, err)
+
+			if in.Password != "httppass" {
+				w.WriteHeader(http.StatusUnauthorized)
+			}
+		}),
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:9122")
+	require.NoError(t, err)
+
+	go httpServ.Serve(ln)
+	defer httpServ.Shutdown(context.Background())
+
+	m := Manager{
+		Method:               conf.AuthMethodHTTP,
+		HTTPAddress:          "http://127.0.0.1:9122/auth",
+		HTTPTryInternalUsers: true,
+		InternalUsers: []conf.AuthInternalUser{{
+			User: "any",
+			Permissions: []conf.AuthInternalUserPermission{{
+				Action: conf.AuthActionRead,
+				Path:   "~^public/",
+			}},
+		}},
+	}
+
+	request := func(path string, pass string) *Request {
+		return &Request{
+			Action:      conf.AuthActionRead,
+			Path:        path,
+			Protocol:    ProtocolSRT,
+			Credentials: &Credentials{Pass: pass},
+			IP:          net.ParseIP("10.0.0.1"),
+		}
+	}
+
+	_, err2 := m.Authenticate(request("public/stream", ""))
+	require.Nil(t, err2)
+	require.Equal(t, 0, httpCalls)
+
+	_, err2 = m.Authenticate(request("private/stream", "httppass"))
+	require.Nil(t, err2)
+	require.Equal(t, 1, httpCalls)
+
+	_, err2 = m.Authenticate(request("private/stream", "wrong"))
+	require.EqualError(t, err2.Wrapped, "server replied with code 401")
+	require.Equal(t, 2, httpCalls)
+}
+
 func TestAuthJWT(t *testing.T) {
 	for _, ca := range []string{"object", "string"} {
 		t.Run(ca, func(t *testing.T) {
