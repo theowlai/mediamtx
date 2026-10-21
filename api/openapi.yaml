@@ -932,6 +932,8 @@ components:
         overridePublisher:
           type: boolean
           description: Publisher source
+        owlTimestampSEI:
+          type: boolean
         playback:
           type: boolean
           nullable: true

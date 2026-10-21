@@ -42,6 +42,8 @@ type streamFormat struct {
 	alwaysAvailable      bool
 	rtpMaxPayloadSize    int
 	replaceNTP           bool
+	timestampSEI         bool
+	sharedNTPEstimator   *sharedNTPEstimator
 	inboundFramesInError *errordumper.Dumper
 	inboundBytes         *atomic.Uint64
 	outboundBytes        *atomic.Uint64
@@ -73,7 +75,7 @@ func (sf *streamFormat) initialize() error {
 	sf.formatUpdater = newFormatUpdater(sf.outFormat)
 	sf.unitRemuxer = newUnitRemuxer(sf.outFormat)
 
-	if sf.replaceNTP {
+	if sf.replaceNTP && sf.sharedNTPEstimator == nil {
 		sf.ntpEstimator = &ntpestimator.Estimator{
 			ClockRate: sf.outFormat.ClockRate(),
 		}

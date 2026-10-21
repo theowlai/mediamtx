@@ -823,6 +823,14 @@ func TestConfErrors(t *testing.T) {
 			"'alwaysAvailableFile' and 'alwaysAvailableTracks' cannot be used together",
 		},
 		{
+			"owlTimestampSEI and useAbsoluteTimestamp together",
+			"paths:\n" +
+				"  mypath:\n" +
+				"    owlTimestampSEI: yes\n" +
+				"    useAbsoluteTimestamp: yes\n",
+			"'owlTimestampSEI' cannot be used with 'useAbsoluteTimestamp'",
+		},
+		{
 			"missing udp port",
 			"paths:\n" +
 				"  mypath:\n" +

@@ -16,6 +16,8 @@ type streamMedia struct {
 	alwaysAvailable      bool
 	rtpMaxPayloadSize    int
 	replaceNTP           bool
+	timestampSEI         bool
+	sharedNTPEstimator   *sharedNTPEstimator
 	inboundBytes         *atomic.Uint64
 	outboundBytes        *atomic.Uint64
 	updateLastTime       func(time.Duration)
@@ -43,6 +45,8 @@ func (sm *streamMedia) initialize() error {
 			alwaysAvailable:      sm.alwaysAvailable,
 			rtpMaxPayloadSize:    sm.rtpMaxPayloadSize,
 			replaceNTP:           sm.replaceNTP,
+			timestampSEI:         sm.timestampSEI,
+			sharedNTPEstimator:   sm.sharedNTPEstimator,
 			inboundFramesInError: sm.inboundFramesInError,
 			inboundBytes:         sm.inboundBytes,
 			outboundBytes:        sm.outboundBytes,

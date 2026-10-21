@@ -863,6 +863,7 @@ func (pa *path) setAvailable(
 		WriteQueueSize:        pa.writeQueueSize,
 		RTPMaxPayloadSize:     pa.rtpMaxPayloadSize,
 		ReplaceNTP:            replaceNTP,
+		OwlTimestampSEI:       pa.conf.OwlTimestampSEI,
 		Parent:                pa,
 	}
 	err := pa.stream.Initialize()
