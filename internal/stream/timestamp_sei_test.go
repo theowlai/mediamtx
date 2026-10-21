@@ -255,3 +255,116 @@ func TestTimestampSEISharedNTP(t *testing.T) {
 		})
 	}
 }
+
+func newSharedNTPStream(t *testing.T) (*SubStream, chan *unit.Unit, chan *unit.Unit, *description.Session) {
+	desc := &description.Session{Medias: []*description.Media{
+		{
+			Type:    description.MediaTypeAudio,
+			Formats: []format.Format{&format.Opus{PayloadTyp: 97, ChannelCount: 2}},
+		},
+		{
+			Type:    description.MediaTypeVideo,
+			Formats: []format.Format{&format.H264{PayloadTyp: 96, PacketizationMode: 1}},
+		},
+	}}
+
+	strm := &Stream{
+		OrigDesc:          desc,
+		WriteQueueSize:    512,
+		RTPMaxPayloadSize: 1450,
+		ReplaceNTP:        true,
+		OwlTimestampSEI:   true,
+		Parent:            nilLogger{},
+	}
+	err := strm.Initialize()
+	require.NoError(t, err)
+	t.Cleanup(strm.Close)
+
+	subStream := &SubStream{Stream: strm}
+	err = subStream.Initialize()
+	require.NoError(t, err)
+
+	audioCh := readUnit(t, strm, desc.Medias[0], desc.Medias[0].Formats[0])
+	videoCh := readUnit(t, strm, desc.Medias[1], desc.Medias[1].Formats[0])
+
+	return subStream, audioCh, videoCh, desc
+}
+
+// The estimator re-anchors when a PTS is ahead of the wall clock,
+// so a jump in the audio PTS forces a re-anchor without faking time.
+func TestTimestampSEISharedNTPReanchor(t *testing.T) {
+	subStream, audioCh, videoCh, desc := newSharedNTPStream(t)
+
+	writeAudio := func(pts int64) *unit.Unit {
+		subStream.WriteUnit(desc.Medias[0], desc.Medias[0].Formats[0], &unit.Unit{
+			PTS:     pts,
+			Payload: unit.PayloadOpus{{1, 2}},
+		})
+		return <-audioCh
+	}
+	writeVideo := func(pts int64) *unit.Unit {
+		subStream.WriteUnit(desc.Medias[1], desc.Medias[1].Formats[0], &unit.Unit{
+			PTS:     pts,
+			Payload: unit.PayloadH264{{5, 2}},
+		})
+		return <-videoCh
+	}
+
+	audio1 := writeAudio(48000)
+	video1 := writeVideo(90000 - 3600)
+	require.Equal(t, audio1.NTP.Add(-40*time.Millisecond), video1.NTP)
+
+	time.Sleep(20 * time.Millisecond)
+
+	audio2 := writeAudio(48000 * 100)
+	require.True(t, audio2.NTP.After(audio1.NTP))
+	require.Less(t, audio2.NTP.Sub(audio1.NTP), 99*time.Second)
+
+	video2 := writeVideo(90000*100 - 3600)
+	require.Equal(t, audio2.NTP.Add(-40*time.Millisecond), video2.NTP)
+	require.Equal(t, audio2.NTP.Sub(audio1.NTP), video2.NTP.Sub(video1.NTP))
+}
+
+func TestTimestampSEISharedNTPBFrames(t *testing.T) {
+	subStream, audioCh, videoCh, desc := newSharedNTPStream(t)
+
+	subStream.WriteUnit(desc.Medias[0], desc.Medias[0].Formats[0], &unit.Unit{
+		PTS:     48000 * 10,
+		Payload: unit.PayloadOpus{{1, 2}},
+	})
+	anchor := (<-audioCh).NTP
+
+	// PTS in ms before the anchor, video in decode order.
+	for _, w := range []struct {
+		video bool
+		ms    int64
+	}{
+		{true, -300},
+		{false, -280},
+		{true, -200},
+		{true, -267},
+		{false, -260},
+		{true, -233},
+		{true, -100},
+		{false, -240},
+		{true, -167},
+		{true, -133},
+	} {
+		if w.video {
+			subStream.WriteUnit(desc.Medias[1], desc.Medias[1].Formats[0], &unit.Unit{
+				PTS:     90000*10 + w.ms*90,
+				Payload: unit.PayloadH264{{1, 2}},
+			})
+			u := <-videoCh
+			require.Equal(t, anchor.Add(time.Duration(w.ms)*time.Millisecond), u.NTP)
+			require.Equal(t, timestampsei.Build(u.NTP, 90000*10+w.ms*90, timestampsei.CodecH264, 0),
+				u.Payload.(unit.PayloadH264)[0])
+		} else {
+			subStream.WriteUnit(desc.Medias[0], desc.Medias[0].Formats[0], &unit.Unit{
+				PTS:     48000*10 + w.ms*48,
+				Payload: unit.PayloadOpus{{1, 2}},
+			})
+			require.Equal(t, anchor.Add(time.Duration(w.ms)*time.Millisecond), (<-audioCh).NTP)
+		}
+	}
+}

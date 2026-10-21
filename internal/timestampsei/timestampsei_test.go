@@ -148,6 +148,80 @@ func TestInsertH265(t *testing.T) {
 	require.Equal(t, [][]byte{Build(ntp, 1234, CodecH265, 2), trail}, out)
 	require.Equal(t, byte(3), out[0][1])
 
+	malformed := []byte{1 << 1, 0, 4}
+	out = InsertH265([][]byte{malformed}, ntp, 1234)
+	require.Equal(t, [][]byte{Build(ntp, 1234, CodecH265, 0), malformed}, out)
+
 	out = InsertH265([][]byte{vps, sps, pps}, ntp, 1234)
 	require.Equal(t, [][]byte{vps, sps, pps}, out)
+}
+
+func foreignUserData(size int) []byte {
+	rbsp := []byte{5}
+	for s := size; s >= 255; s -= 255 {
+		rbsp = append(rbsp, 0xFF)
+	}
+	rbsp = append(rbsp, byte(size%255))
+	payload := make([]byte, size)
+	payload[0] = 0x11
+	rbsp = append(rbsp, payload...)
+	return emulationPreventionInsert(append(rbsp, 0x80))
+}
+
+func TestInsertH264ReplacesStamp(t *testing.T) {
+	oldNTP := time.Date(2026, 10, 20, 8, 0, 0, 0, time.UTC)
+	ntp := time.Date(2026, 10, 21, 12, 30, 15, 0, time.UTC)
+	sps := []byte{7, 1, 2}
+	pps := []byte{8, 3}
+	recovery := []byte{6, 6, 1, 0x84, 0x80}
+	foreign := append([]byte{6}, foreignUserData(300)...)
+	idr := []byte{5, 4}
+	oldStamp := Build(oldNTP, 1000, CodecH264, 0)
+
+	au := [][]byte{sps, pps, oldStamp, recovery, foreign, idr}
+	out := InsertH264(au, ntp, 1234)
+	require.Equal(t, [][]byte{sps, pps, recovery, foreign, Build(ntp, 1234, CodecH264, 0), idr}, out)
+	require.Equal(t, [][]byte{sps, pps, oldStamp, recovery, foreign, idr}, au)
+}
+
+func TestInsertH265ReplacesStamp(t *testing.T) {
+	oldNTP := time.Date(2026, 10, 20, 8, 0, 0, 0, time.UTC)
+	ntp := time.Date(2026, 10, 21, 12, 30, 15, 0, time.UTC)
+	vps := []byte{32 << 1, 1, 1}
+	sps := []byte{33 << 1, 1, 2}
+	pps := []byte{34 << 1, 1, 3}
+	foreign := append([]byte{39 << 1, 1}, foreignUserData(20)...)
+	idr := []byte{19 << 1, 1, 4}
+	newStamp := Build(ntp, 1234, CodecH265, 0)
+
+	countStamps := func(au [][]byte) int {
+		n := 0
+		for _, nalu := range au {
+			if isStampH265(nalu) {
+				n++
+			}
+		}
+		return n
+	}
+
+	t.Run("prefix", func(t *testing.T) {
+		oldStamp := Build(oldNTP, 1000, CodecH265, 0)
+		out := InsertH265([][]byte{vps, sps, pps, oldStamp, foreign, idr}, ntp, 1234)
+		require.Equal(t, [][]byte{vps, sps, pps, foreign, newStamp, idr}, out)
+		require.Equal(t, 1, countStamps(out))
+	})
+
+	t.Run("suffix", func(t *testing.T) {
+		oldStamp := Build(oldNTP, 1000, CodecH265, 0)
+		oldStamp[0] = 40 << 1
+		out := InsertH265([][]byte{vps, sps, pps, idr, oldStamp}, ntp, 1234)
+		require.Equal(t, [][]byte{vps, sps, pps, newStamp, idr}, out)
+		require.Equal(t, 1, countStamps(out))
+	})
+
+	t.Run("foreign", func(t *testing.T) {
+		suffix := append([]byte{40 << 1, 1}, foreignUserData(20)...)
+		out := InsertH265([][]byte{vps, sps, pps, foreign, idr, suffix}, ntp, 1234)
+		require.Equal(t, [][]byte{vps, sps, pps, foreign, newStamp, idr, suffix}, out)
+	})
 }

@@ -8,6 +8,7 @@
 package timestampsei
 
 import (
+	"bytes"
 	"encoding/binary"
 	"time"
 
@@ -28,6 +29,7 @@ const (
 	payloadTypeUserDataUnregistered = 5
 	payloadSize                     = 16 + 1 + 8 + 8
 	h265NALUTypePrefixSEI           = 39
+	h265NALUTypeSuffixSEI           = 40
 )
 
 // Codec is a video codec.
@@ -92,31 +94,98 @@ func isVCLH265(nalu []byte) bool {
 	return typ <= 31
 }
 
-func insert(au [][]byte, pos int, nalu []byte) [][]byte {
-	out := make([][]byte, 0, len(au)+1)
-	out = append(out, au[:pos]...)
-	out = append(out, nalu)
-	return append(out, au[pos:]...)
+func readSEIValue(rbsp []byte) (int, []byte, bool) {
+	v := 0
+	for len(rbsp) != 0 && rbsp[0] == 0xFF {
+		v += 255
+		rbsp = rbsp[1:]
+	}
+	if len(rbsp) == 0 {
+		return 0, nil, false
+	}
+	return v + int(rbsp[0]), rbsp[1:], true
 }
 
-// InsertH264 returns a copy of an H264 access unit with the SEI before its first VCL NAL unit.
+// hasStamp reports whether a SEI NAL unit contains a message with UUID.
+func hasStamp(nalu []byte, headerLen int) bool {
+	if len(nalu) <= headerLen {
+		return false
+	}
+	rbsp := h264.EmulationPreventionRemove(nalu[headerLen:])
+
+	// the last byte holds the RBSP trailing bits.
+	for len(rbsp) > 1 {
+		var typ, size int
+		var ok bool
+
+		typ, rbsp, ok = readSEIValue(rbsp)
+		if !ok {
+			return false
+		}
+		size, rbsp, ok = readSEIValue(rbsp)
+		if !ok || size > len(rbsp) {
+			return false
+		}
+
+		if typ == payloadTypeUserDataUnregistered && size >= len(UUID) && bytes.Equal(rbsp[:len(UUID)], UUID[:]) {
+			return true
+		}
+		rbsp = rbsp[size:]
+	}
+
+	return false
+}
+
+func isStampH264(nalu []byte) bool {
+	return h264.NALUType(nalu[0]&0x1F) == h264.NALUTypeSEI && hasStamp(nalu, 1)
+}
+
+func isStampH265(nalu []byte) bool {
+	typ := (nalu[0] >> 1) & 0b111111
+	return (typ == h265NALUTypePrefixSEI || typ == h265NALUTypeSuffixSEI) && hasStamp(nalu, 2)
+}
+
+// insertStamp returns a copy of au with sei before the first VCL NAL unit and without existing stamps,
+// so that a re-published access unit carries only the new stamp.
+func insertStamp(au [][]byte, isVCL func([]byte) bool, isStamp func([]byte) bool, sei func(vcl []byte) []byte) [][]byte {
+	vcl := -1
+	for i, nalu := range au {
+		if isVCL(nalu) {
+			vcl = i
+			break
+		}
+	}
+	if vcl < 0 {
+		return au
+	}
+
+	out := make([][]byte, 0, len(au)+1)
+	for i, nalu := range au {
+		if i == vcl {
+			out = append(out, sei(nalu))
+		}
+		if !isStamp(nalu) {
+			out = append(out, nalu)
+		}
+	}
+	return out
+}
+
+// InsertH264 returns a copy of an H264 access unit with the SEI before its first VCL NAL unit
+// and without SEI NAL units that already carry a stamp.
 // The access unit is returned unchanged when it has no VCL NAL unit.
 func InsertH264(au [][]byte, ntp time.Time, pts int64) [][]byte {
-	for i, nalu := range au {
-		if isVCLH264(nalu) {
-			return insert(au, i, Build(ntp, pts, CodecH264, 0))
-		}
-	}
-	return au
+	return insertStamp(au, isVCLH264, isStampH264, func([]byte) []byte {
+		return Build(ntp, pts, CodecH264, 0)
+	})
 }
 
-// InsertH265 returns a copy of an H265 access unit with the SEI before its first VCL NAL unit.
+// InsertH265 returns a copy of an H265 access unit with the SEI before its first VCL NAL unit
+// and without SEI NAL units that already carry a stamp.
 // The access unit is returned unchanged when it has no VCL NAL unit.
 func InsertH265(au [][]byte, ntp time.Time, pts int64) [][]byte {
-	for i, nalu := range au {
-		if len(nalu) >= 2 && isVCLH265(nalu) {
-			return insert(au, i, Build(ntp, pts, CodecH265, (nalu[1]&0b111)-1))
-		}
-	}
-	return au
+	return insertStamp(au, func(nalu []byte) bool { return len(nalu) >= 2 && isVCLH265(nalu) }, isStampH265,
+		func(vcl []byte) []byte {
+			return Build(ntp, pts, CodecH265, max(vcl[1]&0b111, 1)-1)
+		})
 }

@@ -81,7 +81,7 @@ pathDefaults:
   owlTimestampSEI: true
 ```
 
-The SEI message reaches every reader and recordings, regardless of protocol. It is inserted before the first slice of each access unit and has type 5 (user data unregistered), with a 33-byte payload:
+The SEI message reaches every reader and recordings, regardless of protocol. It is inserted before the first slice of each access unit, replacing any stamp the access unit already carries (for instance when a recording is published again), and has type 5 (user data unregistered), with a 33-byte payload:
 
 | bytes | content                                                 |
 | ----- | ------------------------------------------------------- |
@@ -90,6 +90,6 @@ The SEI message reaches every reader and recordings, regardless of protocol. It 
 | 17-24 | absolute timestamp, Unix nanoseconds, big-endian int64  |
 | 25-32 | relative timestamp (PTS), 90kHz units, big-endian int64 |
 
-When absolute timestamps are replaced with the system timestamp, all tracks of the stream share a single clock, so that the timestamp in the SEI and the names of recording segments are comparable.
+When absolute timestamps are replaced with the system timestamp, all tracks of the stream share a single clock, so that the timestamp in the SEI and the names of recording segments are comparable. HLS sources are not covered: they keep a clock per track, so their audio and video timestamps are not on the same clock. With the shared clock, a publisher whose audio and video PTS sit more than 5 s apart makes the two tracks re-anchor the clock alternately, so their absolute timestamps fall back to arrival time without smoothing; with the parameter off, each track has its own clock and this does not happen.
 
 Access units of RTSP and WebRTC publishers that are routed to readers without remuxing are not stamped, otherwise RTSP readers would receive them without the SEI. The parameter cannot be used together with `useAbsoluteTimestamp`.
