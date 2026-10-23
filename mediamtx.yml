@@ -520,6 +520,10 @@ pathDefaults:
   srtReadPassphrase:
   # Use absolute timestamp of frames, instead of replacing them with the current time.
   useAbsoluteTimestamp: false
+  # Insert into every H264 and H265 access unit a SEI message with the ingest time
+  # of the access unit, as Unix nanoseconds, and its PTS, in 90kHz units.
+  # This also makes all tracks of a stream share a single NTP clock.
+  owlTimestampSEI: false
 
   ###############################################
   # Default path settings -> Always available

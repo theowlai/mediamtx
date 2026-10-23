@@ -220,6 +220,7 @@ type Path struct {
 	SRTReadPassphrase          string   `json:"srtReadPassphrase"`
 	Fallback                   *string  `json:"fallback,omitempty" deprecated:"true"`
 	UseAbsoluteTimestamp       bool     `json:"useAbsoluteTimestamp"`
+	OwlTimestampSEI            bool     `json:"owlTimestampSEI"`
 
 	// Always available
 	AlwaysAvailable       bool                   `json:"alwaysAvailable"`
@@ -791,6 +792,10 @@ func (pconf *Path) validate(
 		if err != nil {
 			return err
 		}
+	}
+
+	if pconf.OwlTimestampSEI && pconf.UseAbsoluteTimestamp {
+		return fmt.Errorf("'owlTimestampSEI' cannot be used with 'useAbsoluteTimestamp'")
 	}
 
 	// Always available

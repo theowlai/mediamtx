@@ -407,7 +407,7 @@ func (f *formatFMP4) initialize() bool {
 						return track.write(&formatFMP4Sample{
 							Sample: &sampl,
 							dts:    dts,
-							ntp:    u.NTP,
+							ntp:    f.videoSampleNTP(u, dts),
 						})
 					})
 
@@ -487,7 +487,7 @@ func (f *formatFMP4) initialize() bool {
 						return track.write(&formatFMP4Sample{
 							Sample: &sampl,
 							dts:    dts,
-							ntp:    u.NTP,
+							ntp:    f.videoSampleNTP(u, dts),
 						})
 					})
 
@@ -955,4 +955,14 @@ func (f *formatFMP4) close() {
 	if f.currentSegment != nil {
 		f.currentSegment.close() //nolint:errcheck
 	}
+}
+
+// with the timestamp SEI, the NTP of a H264 or H265 sample is the one of its DTS,
+// so that a segment that starts with video is named after the NTP of its media time zero,
+// like a segment that starts with audio.
+func (f *formatFMP4) videoSampleNTP(u *unit.Unit, dts int64) time.Time {
+	if f.ri.stream.OwlTimestampSEI {
+		return u.NTP.Add(-timestampToDuration(u.PTS-dts, 90000))
+	}
+	return u.NTP
 }

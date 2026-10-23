@@ -7,6 +7,7 @@ import (
 
 	"github.com/bluenviron/gortsplib/v5/pkg/format"
 	"github.com/bluenviron/mediamtx/internal/logger"
+	"github.com/bluenviron/mediamtx/internal/timestampsei"
 	"github.com/bluenviron/mediamtx/internal/unit"
 )
 
@@ -100,7 +101,12 @@ func (ssf *subStreamFormat) writeUnitInner(u *unit.Unit) error {
 	}
 
 	if ssf.streamFormat.replaceNTP {
-		u.NTP = ssf.streamFormat.ntpEstimator.Estimate(u.PTS)
+		if ssf.streamFormat.sharedNTPEstimator != nil {
+			u.NTP = ssf.streamFormat.sharedNTPEstimator.estimate(multiplyAndDivide2(time.Duration(u.PTS),
+				time.Second, time.Duration(ssf.streamFormat.outFormat.ClockRate())))
+		} else {
+			u.NTP = ssf.streamFormat.ntpEstimator.Estimate(u.PTS)
+		}
 	}
 
 	if len(u.RTPPackets) != 0 {
@@ -147,6 +153,18 @@ func (ssf *subStreamFormat) writeUnitInner(u *unit.Unit) error {
 		u.Payload = ssf.streamFormat.unitRemuxer(ssf.streamFormat.outFormat, u.Payload)
 
 		if ssf.streamFormat.rtpEncoder != nil && !u.NilPayload() {
+			// units are stamped only when RTP packets are generated from the payload,
+			// otherwise RTSP readers would receive packets without the stamp.
+			if ssf.streamFormat.timestampSEI {
+				switch payload := u.Payload.(type) {
+				case unit.PayloadH264:
+					u.Payload = unit.PayloadH264(timestampsei.InsertH264(payload, u.NTP, u.PTS))
+
+				case unit.PayloadH265:
+					u.Payload = unit.PayloadH265(timestampsei.InsertH265(payload, u.NTP, u.PTS))
+				}
+			}
+
 			var err error
 			u.RTPPackets, err = ssf.streamFormat.rtpEncoder.encode(u.Payload)
 			if err != nil {

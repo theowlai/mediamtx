@@ -280,6 +280,7 @@ type Stream struct {
 	WriteQueueSize        int
 	RTPMaxPayloadSize     int
 	ReplaceNTP            bool
+	OwlTimestampSEI       bool
 	Parent                logger.Writer
 
 	outDescMutex sync.RWMutex
@@ -296,6 +297,7 @@ type Stream struct {
 	rtspsStream          *gortsplib.ServerStream
 	readers              map[*Reader]struct{}
 	inboundFramesInError *errordumper.Dumper
+	ntpEstimator         *sharedNTPEstimator
 
 	timeMutex         sync.Mutex
 	firstTimeReceived bool
@@ -341,6 +343,13 @@ func (s *Stream) Initialize() error {
 
 	s.lastSystemTime = time.Now()
 
+	// with the timestamp SEI, all formats share an estimator,
+	// in order to put NTP timestamps of all tracks on the same clock.
+	if s.OwlTimestampSEI && s.ReplaceNTP {
+		s.ntpEstimator = &sharedNTPEstimator{}
+		s.ntpEstimator.initialize()
+	}
+
 	s.outDesc = &description.Session{
 		Title:  s.OrigDesc.Title,
 		Medias: make([]*description.Media, len(s.OrigDesc.Medias)),
@@ -352,6 +361,8 @@ func (s *Stream) Initialize() error {
 			alwaysAvailable:      s.AlwaysAvailable,
 			rtpMaxPayloadSize:    s.RTPMaxPayloadSize,
 			replaceNTP:           s.ReplaceNTP,
+			timestampSEI:         s.OwlTimestampSEI,
+			sharedNTPEstimator:   s.ntpEstimator,
 			inboundBytes:         &s.inboundBytes,
 			outboundBytes:        &s.outboundBytes,
 			updateLastTime:       s.updateLastTime,
